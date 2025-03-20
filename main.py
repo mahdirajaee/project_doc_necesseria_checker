@@ -145,6 +145,7 @@ def main():
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of worker threads')
     parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 for all grants)')
     parser.add_argument('--verify-only', action='store_true', help='Only verify grant IDs exist without updating')
+    parser.add_argument('--all-grants', action='store_true', help='Process all grants regardless of status')
     args = parser.parse_args()
     
     # Set up logging
@@ -156,36 +157,43 @@ def main():
         # Initialize database manager
         db_manager = DatabaseManager()
         
-        # Get active grants
-        active_grants = db_manager.get_active_grants()
-        if not active_grants:
-            logger.info("No active grants found. Exiting.")
-            return
+        # Get grants (either active only or all based on the flag)
+        if args.all_grants:
+            grants = db_manager.get_all_grants()
+            if not grants:
+                logger.info("No grants found in the database. Exiting.")
+                return
+            logger.info(f"Found {len(grants)} total grants to process")
+        else:
+            grants = db_manager.get_active_grants()
+            if not grants:
+                logger.info("No active grants found. Exiting.")
+                return
+            logger.info(f"Found {len(grants)} active grants to process")
         
         # Apply batch size if specified
-        if args.batch_size > 0 and args.batch_size < len(active_grants):
-            active_grants = active_grants[:args.batch_size]
-        
-        logger.info(f"Found {len(active_grants)} active grants to process")
+        if args.batch_size > 0 and args.batch_size < len(grants):
+            grants = grants[:args.batch_size]
+            logger.info(f"Processing batch of {len(grants)} grants")
         
         # Verify grants exist first if requested
         if args.verify_only:
             existing_grants = 0
-            for grant in tqdm(active_grants, desc="Verifying grants"):
+            for grant in tqdm(grants, desc="Verifying grants"):
                 if db_manager.check_grant_exists(grant['id']):
                     existing_grants += 1
             
-            logger.info(f"Verified {existing_grants}/{len(active_grants)} grants exist in the database")
+            logger.info(f"Verified {existing_grants}/{len(grants)} grants exist in the database")
             return
 
         # Process grants in parallel
         processed_grants = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             # Submit all grants for processing
-            future_to_grant = {executor.submit(process_grant, grant): grant for grant in active_grants}
+            future_to_grant = {executor.submit(process_grant, grant): grant for grant in grants}
             
             # Process results as they complete
-            for future in tqdm(concurrent.futures.as_completed(future_to_grant), total=len(active_grants), desc="Processing grants"):
+            for future in tqdm(concurrent.futures.as_completed(future_to_grant), total=len(grants), desc="Processing grants"):
                 grant = future_to_grant[future]
                 try:
                     processed_grant = future.result()

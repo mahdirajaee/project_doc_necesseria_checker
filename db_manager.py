@@ -58,6 +58,33 @@ class DatabaseManager:
         stop=stop_after_attempt(config.MAX_RETRIES),
         wait=wait_exponential(multiplier=config.RETRY_BACKOFF)
     )
+    def get_all_grants(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves all grants from the bandi table regardless of status.
+        
+        Returns:
+            List[Dict[str, Any]]: List of all grants with their details.
+        """
+        try:
+            response = self.supabase.table(config.BANDI_TABLE) \
+                .select("id, link_bando, link_sito_bando, documentazione_necessaria, stato") \
+                .execute()
+            
+            if hasattr(response, 'data'):
+                logger.info(f"Retrieved {len(response.data)} total grants")
+                return response.data
+            else:
+                logger.warning("No data attribute in response")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error fetching all grants: {e}")
+            raise
+    
+    @retry(
+        stop=stop_after_attempt(config.MAX_RETRIES),
+        wait=wait_exponential(multiplier=config.RETRY_BACKOFF)
+    )
     def check_grant_exists(self, grant_id: str) -> bool:
         """
         Checks if a grant exists in the database.
@@ -90,7 +117,7 @@ class DatabaseManager:
     )
     def update_documentation(self, grant_id: str, documentation: str) -> bool:
         """
-        Updates the documentazione_necessaria column and timestamp for a specific grant.
+        Updates the documentazione_necessaria column, updated_at and update_in_db timestamps for a specific grant.
         
         Args:
             grant_id (str): The ID of the grant to update.
@@ -107,17 +134,18 @@ class DatabaseManager:
             # Get current timestamp in ISO format
             current_time = datetime.now().isoformat()
             
-            # Update both documentation and timestamp
+            # Update documentation and timestamps (both updated_at and update_in_db)
             response = self.supabase.table(config.BANDI_TABLE) \
                 .update({
                     "documentazione_necessaria": documentation,
-                    "updated_at": current_time  # Update timestamp
+                    "updated_at": current_time,  # Update standard timestamp
+                    "update_in_db": current_time  # Update special tracking timestamp
                 }) \
                 .eq("id", grant_id) \
                 .execute()
             
             if hasattr(response, 'data') and len(response.data) > 0:
-                logger.info(f"Successfully updated documentation for grant {grant_id}")
+                logger.info(f"Successfully updated documentation and timestamps for grant {grant_id}")
                 return True
             else:
                 logger.warning(f"No rows updated for grant {grant_id} despite it existing")
@@ -130,7 +158,8 @@ class DatabaseManager:
                     response = self.supabase.table(config.BANDI_TABLE) \
                         .update({
                             "documentazione_necessaria": documentation,
-                            "updated_at": current_time
+                            "updated_at": current_time,
+                            "update_in_db": current_time  # Also update in the second attempt
                         }) \
                         .eq("id", grant_id) \
                         .execute()
